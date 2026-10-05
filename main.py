@@ -1,63 +1,60 @@
-from fastapi import FastAPI
+from typing import Annotated, Optional
+
+from fastapi import FastAPI, HTTPException, Depends
+from pydantic import BaseModel
+from sqlmodel import Session, select
+
+from models import User, engine, create_tables
 
 app = FastAPI()
 
-cars = []
+
+@app.on_event("startup")
+def on_startup():
+    create_tables()
 
 
-@app.get("/cars")
-def get_cars():
-    return cars
+def get_session():
+    with Session(engine) as session:
+        yield session
 
 
-@app.get("/cars/get")
-def get_car(id: int):
-    for car in cars:
-        if car["id"] == id:
-            return car
-
-    return {"message": "Mashina topilmadi"}
+SessionDep = Annotated[Session, Depends(get_session)]
 
 
-@app.get("/cars/add")
-def add_car(id: int, name: str, year: int):
-    car = {
-        "id": id,
-        "name": name,
-        "year": year
-    }
-
-    cars.append(car)
-
-    return {
-        "message": "Mashina qo‘shildi",
-        "car": car
-    }
+class UserForm(BaseModel):
+    name: str
+    age: Optional[int] = None
 
 
-@app.get("/cars/update")
-def update_car(id: int, name: str, year: int):
-    for car in cars:
-        if car["id"] == id:
-            car["name"] = name
-            car["year"] = year
-
-            return {
-                "message": "Mashina o'zgartirildi",
-                "car": car
-            }
-
-    return {"message": "Mashina topilmadi"}
+@app.post("/user/create", summary="User Create")
+def user_create(form: UserForm, session: SessionDep):
+    user = User(**form.model_dump())
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return {"message": "User yaratildi!", "data": user}
 
 
-@app.get("/cars/delete")
-def delete_car(id: int):
-    for car in cars:
-        if car["id"] == id:
-            cars.remove(car)
+@app.get("/user/list", summary="User List")
+def user_list(session: SessionDep):
+    users = session.exec(select(User)).all()
+    return users
 
-            return {
-                "message": "Mashina o'chirildi"
-            }
 
-    return {"message": "Mashina topilmadi"}
+@app.get("/user/detail/{user_id}", summary="User Detail")
+def user_detail(user_id: int, session: SessionDep):
+    user = session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User topilmadi")
+    return user
+
+
+@app.delete("/user/{user_id}/delete", summary="User Delete")
+def user_delete(user_id: int, session: SessionDep):
+    user = session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User topilmadi")
+    session.delete(user)
+    session.commit()
+    return {"message": "User o'chirildi!"}
